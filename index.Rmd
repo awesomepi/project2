@@ -46,92 +46,381 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+Luis Kim
+
+lyk226
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+Today I am analyzing my primary music playlists. Apart from setlists for my radio show, I only really have created and maintain 4 playlists. They are the result of me sorting my music into four levels of intensity: "compost" is for sad, quiet stuff, "recycled paper" is for chill, laid-back stuff, "recycled metal" is for hype, louder music, and "hot garbage" is for loud and intense stuff (should not be played in front of friends). Playlists are viewable on my Spotify page <a href="https://open.spotify.com/user/awesomepis?si=d60d3b1c97c04055">here</a>.
+
+The data itself was obtained from <a href="http://sortyourmusic.playlistmachinery.com/index.html">this website</a>. A little bit of tidying was done in spreadsheet to make my life easier. Explanations of the variables:
+
+TITLE / ARTIST: title and artist of track.
+
+PLAYLIST / PLAYLIST.ID : PLAYLIST has the names of the playlists, PLAYLIST.ID assigns a integer value to each playlist.
+
+RELEASE: release year.
+
+The rest of the variables are given by Spotify through The Echo Nest. I know not how they are calculated.
+
+BPM: bpm. 
+
+ENERGY: the energy/intensity of a track.
+
+DANCE: the danceability of a track.
+
+LOUD: the loudness of a track. All values are negative (probably because they are calculated with 0 being the loudest value, as on standard mixing equipment).
+
+VALENCE: the mood of a track. Higher VALENCE corresponds to happier music.
+
+LENGTH: the length of each track, in minutes.
+
+ACOUSTIC: the "acousticness" of a song. Higher ACOUSTIC corresponds to more acoustic instrumentation.
+
+POP: the popularity of a song. Higher POP corresponds to more popularity.
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
+pls <- read.csv("~/project2/data/playlists.csv",stringsAsFactors = F)
+pls <- pls %>% rename("POP"="POP.") %>% mutate(PLAYLIST = factor(PLAYLIST,levels=c("compost","recycled paper","recycled metal","hot garbage")))
 
-# if your dataset needs tidying, do so here
-
-# any other code here
+pls %>% glimpse()
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
 ```
 
-Discussion of clustering here
-    
-    
+I will attempt to cluster the data using the numerical variables from BPM to POP.
+
+I'll begin by testing out various $k$ to see which $k$ produces optimal sillhouette width.
+
+```{r}
+pamcomp <- data.frame(k=c(1),silwidth=c(0))
+names(pamcomp) <- c("k","silwidth")
+for(i in 2:20){
+    pamcomp <- pamcomp %>% add_row(k=i,silwidth = (pls %>% select(BPM:POP) %>% pam(k=i))$silinfo$avg.width)
+}
+pamcomp %>% ggplot(aes(x=k,y=silwidth)) + geom_line() + scale_x_continuous(breaks=1:20)
+```
+
+It seems that k=2 gives the best (but still very terrible) clustering results.
+
+```{r}
+pls_pam <- pls %>% select(BPM:POP) %>% pam(k=2)
+```
+
+
+```{r}
+pls_pam$silinfo$avg.width
+```
+
+Our clusters have an average silhouette width of 0.2768. This is very poor and is indicative of very little structure in the data (if any). Unlucky. Either way, we will explore the clusters.
+
+```{r}
+pls[c(296,131),]
+```
+
+These are our two medians. The first is Weaver by Richard Dawson off of his 2017 progressive folk album, Peasant. It is in the "recycled paper" playlist. The second is Pyrotechnics by Jean Dawson off of his 2020 indie pop album, Pixel Bath. It is in the "compost" playlist. The two tracks seem to differ most by their ENERGY and ACOUSTIC values. Almost all of the other variables show very little difference between the two clusters.
+
+```{r}
+library(GGally)
+pls %>% select(BPM:POP) %>% mutate(cluster = as.factor(pls_pam$clustering)) -> plsclus
+plsclus %>% ggpairs(columns=1:8, aes(color=cluster))
+```
+
+Pairwise analysis reveals that, indeed, ACOUSTIC and ENERGY are by far the most important variables in the clustering. ACOUSTIC is particularly striking, with the histogram showing a very very clear difference between the two clusters, as well as every plot involving ACOUSTIC being starkly separated into red and blue sections. LOUD and VALENCE also have some distinction, but the split is very minor. Otherwise, the clusters are very similar. The silhouette width revealed that there's very little if any cluster structure in the data, and this pairwise analysis only really affirms that.
+  
+I also thought it would be interesting if I tried only taking the tracks from the most contrasting playlists, "compost" and "hot garbage", and clustering those. Here are the results:
+
+```{r}
+pls_pam2 <- pls %>% filter(PLAYLIST.ID == 1 | PLAYLIST.ID == 4) %>% select(BPM:POP) %>% pam(k=2)
+pls_pam2$silinfo$avg.width
+pls[pls$PLAYLIST.ID == 1 | pls$PLAYLIST.ID==4,][c(140,479),]
+```
+
+```{r}
+library(GGally)
+pls %>% filter(PLAYLIST.ID == 1 | PLAYLIST.ID == 4) %>% select(PLAYLIST.ID,BPM:POP) %>% mutate(cluster = as.factor(pls_pam2$clustering)) -> plsclus
+plsclus %>% ggpairs(columns=1:9, aes(color=cluster))
+```
+
+The clusters, pleasantly surprisingly, follow the division of the playlists. Some "hot garbage" seems to have leaked into the "compost" pile.
+
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+pls_pca <- pls %>% select(BPM:POP) %>% princomp(cor=T)
+summary(pls_pca,loading=T)
 ```
 
-Discussions of PCA here. 
+```{r}
+eigval<-pls_pca$sdev^2
+varprop=round(eigval/sum(pls_pca$sdev^2), 2)
+ggplot() + geom_bar(aes(y=varprop, x=1:8), stat="identity") + xlab("") + geom_path(aes(x=1:8,y = varprop))+
+    geom_text(aes(x=1:8, y=varprop, label=round(varprop, 2)), vjust=1, col="white", size=5)+
+    scale_y_continuous(breaks=seq(0, .6, .2), labels = scales::percent) + 
+    scale_x_continuous(breaks=1:10)
+```
+
+It takes 5 PC's for the proportion of variance explained to exceed 86%, and there seems to an elbow at PC #6 in the scree plot. Therefore, I'm going to keep 5 of the 8 PC's. Overall, the PC analysis seems somewhat informative, with 50% of the variance explained by the first two PCs.
+
+PC1 seems to be a general intensity axis, with higher scores in PC1 corresponding to higher ENERGY and loudness (LOUD), as well as lower acousticness (ACOUSTIC). Interestingly, VALENCE is also somewhat picked up in this PC. It seems like this PC is the axis along which the clustering in the clustering section of this project occured.
+
+PC2 seems to be a downer axis, with higher scores in PC2 corresponding with a large decrease in danceability (DANCE) and happiness (VALENCE). Interestingly, this axis also corresponds to longer songs (higher LENGTH) and a decrease in acousticness (ACOUSTIC) and popularity (POP). I suspect this axis may correspond to the [long to very long] [post-rock or post-rock adjacent] [sad or angry] tracks in my listening.
+
+PC3 seems to be a popularity axis, with higher scores in PC3 corresponding primarily to an increase in popularity (POP). Interestingly, a lesser, but still pretty significant, LENGTH aspect is on this axis.
+
+PC4 seems to be a speed axis, with higher scores in PC4 corresponding exclusively to higher BPM. Sometimes, you have to go fast. Or maybe slow.
+
+PC5 seems to be a a length axis, with higher scores corresponding primarily to an increase in LENGTH. Weirdly, higher scores on PC5 correspond to happier tracks (higher VALENCE), contrary to PC2, and correspond to decreased popularity (POP), contrary to PC3. Not really sure what's going on there.
+
+```{r}
+pca_scores<-data.frame(pls_pca$scores,pls$PLAYLIST)
+pca_scores %>% ggplot(aes(x=Comp.1,y=Comp.2,color=pls.PLAYLIST)) + geom_point() + labs(x="PC1 Scores",y="PC2 Scores")
+```
+
+Here are all of the data points, graphed by their scores on PC1 and PC2, colored by what playlist they are in. As you can see, the colors seem to change across PC1. This makes sense, because the playlists are split up by intensity, and PC1 is an axis of intensity. Also, this is a good sign that there is a correlation between these variables and the playlists, which is good news for the schenanigans we will pull later.
 
 ###  Linear Classifier
 
-```{R}
-# linear classifier code here
+```{r}
+library(caret)
 ```
 
-```{R}
-# cross-validation of linear classifier here
+
+Now, what you may have noticed is that the data does not have a binary variable. I said earlier that one of my goals was to see if I could find a model to explain the divisions of my playlists. I had the idea to use a series of linear classifiers to sort the data into different playlists, which I could do, but I figured that was maybe too ambitious. So, instead, I am going to create a linear classifier that will separate the "hot garbage" from the more decomposable trash.
+
+It should be noted that LENGTH is not normally distributed. The log of LENGTH is approximately normal, making it probably better to stick in the model, so I'm going to do that.
+
+```{r}
+ggplot(pls,aes(x=log(LENGTH))) + geom_histogram()
 ```
 
-Discussion here
+
+```{R}
+log_fit <- glm(PLAYLIST == "hot garbage" ~ RELEASE + BPM + ENERGY + DANCE + LOUD + VALENCE + log(LENGTH) + ACOUSTIC + POP, data=pls, family="binomial")
+summary(log_fit)
+```
+
+Here is our logistic model. 5 of the numeric variables are statistically significant. A track may be "hot garbage" if it is high energy, undanceable, sad, not acoustic, and not popular. Less statistically significantly, "hot garbage" is slightly correlated to older tracks, faster tracks, louder tracks, and shorter tracks. 
+
+At first I found it strange that LOUD was not significantly correlated with "hot garbage", but then I realized that this was likely because LOUD more has to do with the mastering of the tracks than how loud they sound. For example, pop songs are generally louder than metal songs because of generally better mastering techniques and the currently ensuing loudness war.
+
+```{r}
+prob_reg <- predict(log_fit,type="response")
+class_diag(prob_reg,pls$PLAYLIST,"hot garbage")
+
+library(ROCR)
+plot(performance(prediction(prob_reg,pls$PLAYLIST=="hot garbage"),"tpr","fpr"))
+```
+
+The classifier has an AUC of 0.8654, which is fairly good.
+
+```{r}
+confusionMatrix(as.factor(prob_reg > 0.5),as.factor(pls$PLAYLIST == "hot garbage"))
+```
+
+There's the confusion matrix. It looks pretty good, with good metrics all across the board. The majority of true values being negatives has not overpowered the classifier, with good PPV of 0.8561.
+
+It seems very unlikely that there is overfitting, with 1392 observations to a measly 9 variables. Still, I will perform 10-fold CV to verify that there's no overfitting.
+
+```{R}
+set.seed(7944)
+k=10
+
+data <- sample_frac(pls) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+  # create training and test sets
+  train<-data[folds!=i,] 
+  test<-data[folds==i,] 
+  truth<-test$PLAYLIST
+  
+  # train model
+  fit <- glm(PLAYLIST == "hot garbage" ~ RELEASE + BPM + ENERGY + DANCE + LOUD + VALENCE + log(LENGTH) + ACOUSTIC + POP, data=train, family="binomial")
+  
+  # test model
+  probs <- predict(fit,test)
+  
+  # get performance metrics for each fold
+  diags<-rbind(diags,class_diag(probs,truth,positive="hot garbage")) 
+}
+
+diags
+#average performance metrics across all folds
+summarize_all(diags,mean)
+```
+
+Each of the fits on each fold performed fairly well, with AUC's ranging from around 0.8 to 0.9. The mean AUC across folds was 0.86042, which is pretty similar to the original model's AUC. It does not seem like there was any overfitting in the original model, as this has given us fairly similar results.
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+knn_fit <- knn3(PLAYLIST == "hot garbage" ~ RELEASE + BPM + ENERGY + DANCE + LOUD + VALENCE + log(LENGTH) + ACOUSTIC + POP, data=pls)
 ```
+
 
 ```{R}
-# cross-validation of np classifier here
+prob_knn <- predict(knn_fit,pls)
+class_diag(prob_knn[,2],pls$PLAYLIST,positive="hot garbage")
+
+plot(performance(prediction(prob_knn[,2],pls$PLAYLIST=="hot garbage"),"tpr","fpr"))
 ```
 
-Discussion
+The kNN model has an AUC of 0.9168! That's quite great AUC. 
 
+```{r}
+confusionMatrix(as.factor(prob_knn[,2] > 0.5),as.factor(pls$PLAYLIST == "hot garbage"))
+```
+
+The confusion matrix looks good on every metric, looking even better than the regression model's. This is quite a great model. A sensitivity of 0.9410! Of course, that's not all that goes into assessing a model, but jeez this is quite good.
+
+10-fold CV:
+
+```{R}
+set.seed(23423)
+k=10
+
+data<-sample_frac(pls) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+  # create training and test sets
+  train<-data[folds!=i,] 
+  test<-data[folds==i,] 
+  truth<-test$PLAYLIST
+  
+  # train model
+  fit <- knn3(PLAYLIST == "hot garbage" ~ RELEASE + BPM + ENERGY + DANCE + LOUD + VALENCE + log(LENGTH) + ACOUSTIC + POP, data=train)
+  
+  # test model
+  probs <- predict(fit,test)
+  
+  # get performance metrics for each fold
+  diags<-rbind(diags,class_diag(probs[,2],truth,positive="hot garbage")) 
+}
+
+diags
+#average performance metrics across all folds
+summarize_all(diags,mean)
+```
+
+And... there it is. 10-fold CV has the AUC plummetting to a disappointing 0.79944. It seems like the kNN model was overfitting the data by quite a large amount. It seems like the logistic regression model is the way to sort new music into "hot garbage".
 
 ### Regression/Numeric Prediction
 
-```{R}
-# regression model code here
-```
+Since my four playlists are supposed to be from lowest to highest intensity, I can treat the division as both a categorical and a numerical variable. Here, I will treat my playlist divisions as a numerical variable of intensity. Of course, this variable will be heavily discretized, but we should be able to apply linear regression anyway.
 
 ```{R}
-# cross-validation of regression model here
+lm_fit <- lm(PLAYLIST.ID ~ RELEASE + BPM + ENERGY + DANCE + LOUD + VALENCE + log(LENGTH) + ACOUSTIC + POP,data=pls)
+summary(lm_fit)
+mean((lm_fit$residuals)^2)
 ```
 
-Discussion
+Taking a look at the coefficients, 6 of the 9 are statistically significant: higher intensity playlist sortage correlates with earlier release years, higher energy, lower danceability, more sadness, less acousticness, and less popularity. Less significantly, higher intensity playlist sortage correlates with higher BPM, higher loudness, and shorter length.
+
+I'm a little surprised that the BPM coefficient is not significant, but I think that it makes sense considering that there is plenty of slow-tempo metal and other intense music. I tend to not enjoy slow songs anyway, so even my less intense playlists are chockful of at least decently fast music. 
+
+The unadjusted R^2 is 0.4287 and the MSE is 0.6427. These aren't very great numbers, so it seems like there's a pretty poor correlation between these variables and the playlist sorting.  
+
+```{r}
+par(mfrow=c(2,2))
+plot(lm_fit)
+```
+
+Is a linear regression model suitable here? The observations are somewhat dependent on each other (as I usually add tracks from albums together), which may be an issue, but the interaction is pretty minimal, so I don't think independence is much of an issue. The residuals look incredibly normal, for which I am pleasantly surprised. The linearity assumption is satisfied about as well as it can be with such a discrete response variable.
+
+```{r}
+par(mfrow=c(1,1))
+plot(lm_fit$residuals ~ pls$PLAYLIST.ID)
+```
+
+The assumption of constant variance seems pretty good, as each of these groups of residuals have similar spreads. 
+
+10-fold CV:
+
+```{R}
+set.seed(483)
+k=10
+
+data<-sample_frac(pls) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+  # create training and test sets
+  train<-data[folds!=i,] 
+  test<-data[folds==i,] 
+  truth<-test$PLAYLIST.ID
+  
+  # train model
+  fit <- lm(PLAYLIST.ID ~ RELEASE + BPM + ENERGY + DANCE + LOUD + VALENCE + log(LENGTH) + ACOUSTIC + POP,data=train)
+  
+  # test model
+  preds <- predict(fit,test)
+  
+  # get MSE for each fold
+  diags <- rbind(diags,mean((truth-preds)^2))
+}
+
+diags
+#average performance metrics across all folds
+mean(diags)
+```
+
+The average MSE of the models from each fold is 0.6528, which is very slightly higher than the MSE of the original model. It does not seem like the original model has overfit, just that it is just not a very great model.
 
 ### Python 
 
+I wanted to do something neater in this section, but I cannot figure out how to install python packages and use them in here, so I'm just doing something very simple.
+
 ```{R}
 library(reticulate)
+use_python("/usr/bin/python3", required = F)
 ```
+
+In base Python, in order to add two lists together element wise, one must employ a for loop. There are packages such as numpy that can make this easier, but it's still kind of a pain either way. For example:
 
 ```{python}
-# python code here
-```
+x = [1,2,3,4]
+y = [1,2,4,8]
 
-Discussion
+sum = []
+
+for i in range(4):
+  sum.append(x[i]+y[i])
+  
+print(sum)
+```
+This is way easier in R, however. I can pass these two lists into R using the reticulate package and add them here:
+
+```{r}
+z=py$x+py$y
+z
+```
+I can also take this sum back into python, once again using the reticulate package.
+
+```{python}
+print(r.z)
+```
 
 ### Concluding Remarks
 
-Include concluding remarks here, if any
+Thanks for a great semester! Definitely not as technical as other data analysis classes I've taken, and a lot of the second half I'd seen before, but I haven't had a lot of R experience (especially not any basic data analysis or aesthetics stuff), so the first semester of pipes and ggplot practice was super helpful to me.
 
 
 
